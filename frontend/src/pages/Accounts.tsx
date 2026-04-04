@@ -32,6 +32,12 @@ import {
 import { ChatGPTRegistrationModeSwitch } from '@/components/ChatGPTRegistrationModeSwitch'
 import { TaskLogPanel } from '@/components/TaskLogPanel'
 import { usePersistentChatGPTRegistrationMode } from '@/hooks/usePersistentChatGPTRegistrationMode'
+import {
+  buildChatgptSub2ApiBatchBody,
+  buildChatgptSub2ApiButtonLabel,
+  buildChatgptSub2ApiConfirmText,
+  getChatgptSub2ApiScope,
+} from '@/lib/chatgptSub2Api'
 import { parseBooleanConfigValue } from '@/lib/configValueParsers'
 import { buildChatGPTRegistrationRequestAdapter } from '@/lib/chatgptRegistrationRequestAdapter'
 import { apiFetch } from '@/lib/utils'
@@ -509,6 +515,7 @@ export default function Accounts() {
   const [registerLoading, setRegisterLoading] = useState(false)
   const [cpaSyncLoading, setCpaSyncLoading] = useState<'pending' | 'selected' | ''>('')
   const [statusSyncLoading, setStatusSyncLoading] = useState<'probe_selected' | 'probe_all' | 'remote_selected' | 'remote_all' | ''>('')
+  const [sub2ApiUploadLoading, setSub2ApiUploadLoading] = useState<'selected' | 'registered' | ''>('')
 
   useEffect(() => {
     if (platform) setCurrentPlatform(platform)
@@ -901,6 +908,51 @@ export default function Accounts() {
     }
   }
 
+  const handleSub2ApiUpload = async (scope: 'selected' | 'registered') => {
+    if (currentPlatform !== 'chatgpt') return
+
+    const toastKey = `sub2api-upload:${scope}`
+    const scopeLabel = scope === 'selected' ? '所选账号' : '已注册账号'
+
+    try {
+      const cfg = await apiFetch('/config')
+      if (!String(cfg.sub2api_api_url || '').trim() || !String(cfg.sub2api_api_key || '').trim()) {
+        message.warning('请先在设置页配置 Sub2API API URL 和 API Key')
+        return
+      }
+
+      const body = buildChatgptSub2ApiBatchBody({
+        selectedRowKeys: selectedRowKeys as Array<string | number>,
+        search,
+      })
+
+      setSub2ApiUploadLoading(scope)
+      message.loading({ content: `${scopeLabel}上传到 Sub2API 进行中...`, key: toastKey, duration: 0 })
+
+      const result = await apiFetch(`/actions/${currentPlatform}/upload_sub2api/batch`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      })
+
+      if (!result.total) {
+        message.info({ content: '没有可处理的账号', key: toastKey })
+      } else if (!result.failed) {
+        message.success({ content: `${scopeLabel}上传到 Sub2API 完成：成功 ${result.success} / ${result.total}`, key: toastKey })
+      } else if (!result.success) {
+        message.error({ content: `${scopeLabel}上传到 Sub2API 失败：成功 ${result.success} / ${result.total}`, key: toastKey })
+      } else {
+        message.warning({ content: `${scopeLabel}上传到 Sub2API 部分完成：成功 ${result.success} / ${result.total}`, key: toastKey })
+      }
+
+      showBatchActionResult(`${scopeLabel}上传到 Sub2API 结果`, result)
+      await load()
+    } catch (e: any) {
+      message.error({ content: `上传到 Sub2API 失败: ${e.message}`, key: toastKey })
+    } finally {
+      setSub2ApiUploadLoading('')
+    }
+  }
+
   const getStatusSyncScope = (): 'selected' | 'all' => (selectedRowKeys.length > 0 ? 'selected' : 'all')
 
   const getBackfillScope = (): 'selected' | 'pending' => (selectedRowKeys.length > 0 ? 'selected' : 'pending')
@@ -912,6 +964,7 @@ export default function Accounts() {
   }
 
   const isChatgptPlatform = currentPlatform === 'chatgpt'
+  const sub2ApiUploadScope = getChatgptSub2ApiScope(selectedRowKeys.length)
   const monospaceStyle: React.CSSProperties = {
     fontFamily: 'SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
     fontSize: 12,
@@ -1193,6 +1246,20 @@ export default function Accounts() {
                 disabled={getBackfillScope() === 'selected' ? selectedRowKeys.length === 0 : total === 0}
               >
                 {backfillButtonLabel()}
+              </Button>
+            </Popconfirm>
+          )}
+          {currentPlatform === 'chatgpt' && (
+            <Popconfirm
+              title={buildChatgptSub2ApiConfirmText(selectedRowKeys.length, search)}
+              onConfirm={() => handleSub2ApiUpload(sub2ApiUploadScope)}
+            >
+              <Button
+                loading={sub2ApiUploadLoading !== ''}
+                icon={<UploadOutlined />}
+                disabled={sub2ApiUploadScope === 'selected' ? selectedRowKeys.length === 0 : total === 0}
+              >
+                {buildChatgptSub2ApiButtonLabel(selectedRowKeys.length)}
               </Button>
             </Popconfirm>
           )}
